@@ -24,6 +24,10 @@ async function main() {
   if (strategy === 'farm') log.info(`strategy FARM: legs $${config.marginPerLegUsd} x${config.leverage}, close both at ${config.farmMoveBps} bps, budget ${config.farmBudgetUsd > 0 ? '$' + config.farmBudgetUsd : 'none (farm until the balance cannot fund a pair)'}, max ${config.maxConcurrentPairs} cycles`);
   else log.info(`strategy TRADE: legs $${config.marginPerLegUsd} x${config.leverage}, loser stop -${config.loserStopPct * 100}%, take-profit +${config.takeProfitPct * 100}% of pair, max ${config.maxConcurrentPairs} pairs, session loss limit $${config.maxSessionLossUsd}`);
 
+  // Exchange minimums: $10 margin and $1,000 notional per position. Fail here rather than on every open.
+  if (config.marginPerLegUsd < 10) throw new Error(`MARGIN_PER_LEG_USD ${config.marginPerLegUsd} is below the $10 minimum`);
+  if (config.marginPerLegUsd * config.leverage < 1000) throw new Error(`$${config.marginPerLegUsd} x${config.leverage} is a $${config.marginPerLegUsd * config.leverage} position; the minimum is $1,000`);
+
   await refreshMarkets();
   setInterval(refreshMarkets, 60_000);
 

@@ -23,9 +23,9 @@ class FakeFeed extends EventEmitter {
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function run(path: number[], latency: [number, number] = [0, 0], stepMs = 60) {
+async function run(path: number[], latency: [number, number] = [0, 0], stepMs = 60, over: Partial<typeof config> = {}) {
   const feed = new FakeFeed();
-  const cfg = { ...config, leverage: 100, farmMoveBps: 60, maxConcurrentPairs: 1, pairCooldownMs: 1e9, closeRetryMs: 100, secondLegGraceMs: 200 };
+  const cfg = { ...config, leverage: 100, farmMoveBps: 60, maxConcurrentPairs: 1, pairCooldownMs: 1e9, closeRetryMs: 100, secondLegGraceMs: 200, ...over };
   const ex = new SimExecutor(feed as unknown as PriceFeed, 49, latency, false);
   await ex.init();
   for (let i = 0; i < 30; i++) { feed.push('BTC', 100_000 + (i % 2) * 2); feed.push('ETH', 3000); }
@@ -81,5 +81,16 @@ test('farm: when one asset will not open (OI cap), the other asset keeps farming
   assert.equal(active[0].asset, 'ETH');
   assert.equal(active[0].state, 'holding');
   await farmer.stop();
+  assert.deepEqual(ex.openPositionIds(), []);
+});
+
+test('farm at 50x / $20 legs: same $1,000 positions, a crash that liquidated 100x legs is closed cleanly at the target', async () => {
+  // 1.2% gap in a few ticks with fill latency (like ETH on 2026-10-15): beyond the 100x bust, well inside the 50x one.
+  const path = [100_000, 99_300, 98_900, 98_800, 98_800, 98_800];
+  const { stats, ex } = await run(path, [150, 150], 60, { leverage: 50, marginPerLegUsd: 20 });
+  assert.equal(stats.cycles, 1);
+  assert.equal(stats.liquidations, 0);
+  assert.ok(stats.paperMinted > 100, `minted ${stats.paperMinted}`);
+  assert.ok(stats.net < 0 && stats.net > -3, `net ${stats.net}`);
   assert.deepEqual(ex.openPositionIds(), []);
 });
