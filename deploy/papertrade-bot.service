@@ -1,0 +1,27 @@
+[Unit]
+Description=papertrade-bot (PAPER farming, live)
+After=network-online.target time-sync.target
+Wants=network-online.target
+
+[Service]
+User=bot
+Group=bot
+WorkingDirectory=/opt/papertrade-bot
+Environment=STRATEGY=farm
+ExecStart=/usr/bin/node --env-file=/opt/papertrade-bot/.env --import tsx src/index.ts --mode=live
+# Crashes restart after 30 s; on start the bot closes any positions left open (ON_START_EXISTING=close).
+Restart=always
+RestartSec=30
+# `systemctl stop` sends Ctrl+C: the bot closes its open legs (can take up to ~2 min) before exiting.
+KillSignal=SIGINT
+TimeoutStopSec=180
+
+# Hardening: the bot can only write its logs and session-key state.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/papertrade-bot/logs /opt/papertrade-bot/state
+
+[Install]
+WantedBy=multi-user.target

@@ -45,7 +45,10 @@ async function main() {
     ex = new SimExecutor(feed, config.simStartBalanceUsd, [config.simLatencyMinMs, config.simLatencyMaxMs]);
   }
   await ex.init();
-  if (ex.freeBalance() < 2 * config.marginPerLegUsd) {
+  if (ex.freeBalance() < 2 * config.marginPerLegUsd && strategy === 'farm') {
+    // On a server the bot should just wait for a deposit (and keep staking/claiming), not exit and restart-loop.
+    log.warn(`free balance $${ex.freeBalance().toFixed(2)} is below one pair ($${2 * config.marginPerLegUsd}); waiting for a deposit`);
+  } else if (ex.freeBalance() < 2 * config.marginPerLegUsd) {
     log.error(`free balance $${ex.freeBalance().toFixed(2)} is below one pair ($${2 * config.marginPerLegUsd}); nothing to do`);
     await ex.shutdown();
     process.exit(1);
