@@ -55,6 +55,7 @@ export const config = {
 
   // PAPER
   stakeIntervalMs: num('STAKE_INTERVAL_MS', 15 * 60_000),
+  autoClaimRewards: process.env.AUTO_CLAIM_REWARDS === 'true', // default off: USDC rewards accumulate until claimed by hand
   claimIntervalMs: num('CLAIM_INTERVAL_MS', 60 * 60_000),
 
   // Simulation

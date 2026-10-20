@@ -9,6 +9,8 @@ import { PaperFarmer } from './farm.ts';
 import { Journal, log } from './log.ts';
 import { refreshMarkets } from './markets.ts';
 import { scoreAssets } from './selector.ts';
+import { pendingRewards } from './papertrade/yield.ts';
+import { privateKeyToAccount } from 'viem/accounts';
 
 const mode = process.argv.find((a) => a.startsWith('--mode='))?.slice(7) ?? 'sim';
 if (mode !== 'sim' && mode !== 'live') throw new Error(`unknown mode ${mode}`);
@@ -46,7 +48,7 @@ async function main() {
   }
   await ex.init();
   if (ex.freeBalance() < 2 * config.marginPerLegUsd && strategy === 'farm') {
-    // On a server the bot should just wait for a deposit (and keep staking/claiming), not exit and restart-loop.
+    // On a server the bot should just wait for a deposit (and keep staking), not exit and restart-loop.
     log.warn(`free balance $${ex.freeBalance().toFixed(2)} is below one pair ($${2 * config.marginPerLegUsd}); waiting for a deposit`);
   } else if (ex.freeBalance() < 2 * config.marginPerLegUsd) {
     log.error(`free balance $${ex.freeBalance().toFixed(2)} is below one pair ($${2 * config.marginPerLegUsd}); nothing to do`);
@@ -65,7 +67,16 @@ async function main() {
   const stake = async () => { try { await ex.stakePaper(); } catch (e) { log.warn('stake failed:', (e as Error).message); } };
   const claim = async () => { try { await ex.claimRewards(); } catch (e) { log.warn('claim failed:', (e as Error).message); } };
   const stakeTimer = setInterval(stake, config.stakeIntervalMs);
-  const claimTimer = setInterval(claim, config.claimIntervalMs);
+  // Staking rewards are only claimed automatically if AUTO_CLAIM_REWARDS=true; otherwise they accumulate
+  // in the staking contract (claim them on papertrade.xyz) and are never recycled into farming.
+  const claimTimer = config.autoClaimRewards ? setInterval(claim, config.claimIntervalMs) : undefined;
+  let rewardsTimer: NodeJS.Timeout | undefined;
+  if (mode === 'live') {
+    const user = privateKeyToAccount(process.env.WALLET_PRIVATE_KEY as `0x${string}`).address;
+    const showRewards = () => pendingRewards(user).then((r) => log.info(`unclaimed staking rewards: $${r.toFixed(4)} USDC${config.autoClaimRewards ? '' : ' (auto-claim off; claim on papertrade.xyz)'}`)).catch((e) => log.warn('could not read unclaimed rewards:', (e as Error).message));
+    void showRewards();
+    rewardsTimer = setInterval(showRewards, 30 * 60_000);
+  }
 
   const statusTimer = setInterval(() => {
     const scores = scoreAssets(feed, config.selectorWindowMs).map((x) => `${x.asset} ${x.activityBps.toFixed(1)}bps`).join(' ');
@@ -82,7 +93,7 @@ async function main() {
     }
     shuttingDown = Date.now();
     log.info('shutting down: closing open positions…');
-    clearInterval(stakeTimer); clearInterval(claimTimer); clearInterval(statusTimer);
+    clearInterval(stakeTimer); clearInterval(claimTimer); clearInterval(rewardsTimer); clearInterval(statusTimer);
     await trader.stop();
     await ex.shutdown();
     const left = ex.openPositionIds();
