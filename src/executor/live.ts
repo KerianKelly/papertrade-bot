@@ -15,12 +15,13 @@ import { deadline, randomNonce, signIntent } from '../papertrade/signing.ts';
 import { log } from '../log.ts';
 import type { CloseResult, Executor, Position } from './types.ts';
 
-const CLOSE_TIMEOUT_MS = 60_000;
+const CLOSE_CHECK_MS = 30_000;          // how often an unsettled close is checked against the relayer queue
+const CLOSE_MAX_WAIT_MS = 15 * 60_000;   // after this, cancel and resubmit even if it still looks queued
 const SESSION_MIN_REMAINING_SEC = 24 * 3600;
 const usd = (raw: bigint) => Number(raw) / 1e18;
 
 interface PendingOpen { resolve: (lp: LivePosition) => void; reject: (e: Error) => void; asset: Asset; margin: number }
-interface PendingClose { resolve: (r: CloseResult) => void; reject: (e: Error) => void; timer: NodeJS.Timeout; promise: Promise<CloseResult>; intentId?: string }
+interface PendingClose { resolve: (r: CloseResult) => void; reject: (e: Error) => void; timer: NodeJS.Timeout; promise: Promise<CloseResult>; intentId?: string; startedAt: number; misses: number }
 
 export interface LiveOptions {
   openDeadlineSec: number;
@@ -248,17 +249,42 @@ export class LiveExecutor implements Executor {
       if (existing) return existing.promise;
       let resolve!: (v: CloseResult) => void, reject!: (e: Error) => void;
       const promise = new Promise<CloseResult>((res, rej) => { resolve = res; reject = rej; });
-      const entry: PendingClose = { resolve, reject, promise, timer: setTimeout(() => {
-        this.pendingCloses.delete(pos.id);
-        if (entry.intentId) void this.cancelIntent(entry.intentId); // don't leave a duplicate close queued for a retry to collide with
-        reject(new Error('close not confirmed within timeout'));
-      }, CLOSE_TIMEOUT_MS) };
+      const entry: PendingClose = { resolve, reject, promise, timer: undefined as unknown as NodeJS.Timeout, startedAt: Date.now(), misses: 0 };
+      entry.timer = setTimeout(() => void this.checkClose(pos.id, entry), CLOSE_CHECK_MS);
       this.pendingCloses.set(pos.id, entry);
       fresh.push(pos);
       return promise;
     });
     if (fresh.length) void this.submitClose(fresh);
     return Promise.allSettled(promises);
+  }
+
+  /**
+   * A close that hasn't settled yet. The relayer is a FIFO queue that gets congested, so cancelling
+   * and resubmitting only sends us to the back of it. Keep waiting while the intent is still queued;
+   * give up (cancel, let the caller retry) only once it has left the queue without settling twice in a
+   * row, or after CLOSE_MAX_WAIT_MS.
+   */
+  private async checkClose(id: string, entry: PendingClose) {
+    if (this.pendingCloses.get(id) !== entry) return;
+    let queued: { position: number } | undefined | null = null; // null = couldn't tell
+    if (entry.intentId) {
+      try {
+        const q = await getJson<{ entries?: { intentId: string; position: number }[] }>(`/queue-rank/accounts/${this.user}`);
+        queued = q.entries?.find((e) => String(e.intentId).toLowerCase() === entry.intentId) ?? undefined;
+      } catch { /* treat as unknown */ }
+    }
+    if (this.pendingCloses.get(id) !== entry) return; // settled while we were asking
+    const waited = Date.now() - entry.startedAt;
+    if (queued !== undefined) entry.misses = 0; else entry.misses++;
+    if (waited < CLOSE_MAX_WAIT_MS && entry.misses < 2) {
+      if (queued) log.info(`close of ${id} still queued at the relayer (position ${queued.position}, ${(waited / 1000).toFixed(0)}s); waiting`);
+      entry.timer = setTimeout(() => void this.checkClose(id, entry), CLOSE_CHECK_MS);
+      return;
+    }
+    this.pendingCloses.delete(id);
+    if (entry.intentId) void this.cancelIntent(entry.intentId); // don't leave a duplicate close queued for a retry to collide with
+    entry.reject(new Error(`close not confirmed after ${(waited / 1000).toFixed(0)}s`));
   }
 
   private async submitClose(positions: Position[]) {
