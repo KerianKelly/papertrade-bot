@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "sim": "caffeinate -dims tsx --env-file-if-exists=.env src/index.ts --mode=sim",
-    "live": "caffeinate -dims tsx --env-file-if-exists=.env src/index.ts --mode=live",
-    "farm": "STRATEGY=farm caffeinate -dims tsx --env-file-if-exists=.env src/index.ts --mode=sim",
-    "farm:live": "STRATEGY=farm caffeinate -dims tsx --env-file-if-exists=.env src/index.ts --mode=live",
+    "sim": "caffeinate -ims tsx --env-file-if-exists=.env src/index.ts --mode=sim",
+    "live": "caffeinate -ims tsx --env-file-if-exists=.env src/index.ts --mode=live",
+    "farm": "STRATEGY=farm caffeinate -ims tsx --env-file-if-exists=.env src/index.ts --mode=sim",
+    "farm:live": "STRATEGY=farm caffeinate -ims tsx --env-file-if-exists=.env src/index.ts --mode=live",
     "stats": "tsx src/report.ts",
     "test": "tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
