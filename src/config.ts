@@ -43,8 +43,10 @@ export const config = {
   // Safety
   maxSessionLossUsd: num('MAX_SESSION_LOSS_USD', 25), // stop opening new pairs after losing this much
   minFreeBalanceUsd: num('MIN_FREE_BALANCE_USD', 0),
-  // Blind time we tolerate before closing open legs: 10 s at 1000x (stop is 3 bps away), 60 s at <=100x (30 bps away).
-  feedStaleFlattenMs: num('FEED_STALE_FLATTEN_MS', num('LEVERAGE', 100) > 100 ? 10_000 : 60_000),
+  // Blind time we tolerate before closing open legs: 10 s at 1000x (stop is 3 bps away), 60 s at 100x,
+  // 5 min at <=50x (a hedge whose bust is ~195 bps away; closing early on a network blip just wastes the cycle).
+  feedStaleFlattenMs: num('FEED_STALE_FLATTEN_MS', num('LEVERAGE', 100) > 100 ? 10_000 : num('LEVERAGE', 100) > 50 ? 60_000 : 300_000),
+  feedRecoveryMs: num('FEED_RECOVERY_MS', 120_000),  // farm: after a feed outage, wait this long on a healthy feed before opening new cycles
   closeRetryMs: num('CLOSE_RETRY_MS', 2000),
 
   // Live execution

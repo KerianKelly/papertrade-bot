@@ -47,6 +47,7 @@ export class PaperFarmer {
   private timer?: NodeJS.Timeout;
   private lastLoopAt = 0;
   private feedStaleSince: Record<Asset, number> = { BTC: 0, ETH: 0 };
+  private feedBadAt: Record<Asset, number> = { BTC: 0, ETH: 0 }; // last time the feed was unhealthy
   private unmatched = new Map<string, { r: CloseResult; at: number }>();
   private yield_?: PaperYield;
   readonly stats: FarmStats = { cycles: 0, net: 0, paperMinted: 0, liquidations: 0, aborted: 0 };
@@ -114,6 +115,7 @@ export class PaperFarmer {
   private watchFeed() {
     for (const asset of ASSETS) {
       if (this.feed.healthy(undefined, asset)) { this.feedStaleSince[asset] = 0; continue; }
+      this.feedBadAt[asset] = Date.now();
       if (!this.feedStaleSince[asset]) this.feedStaleSince[asset] = Date.now();
       const exposed = this.activeCycles().filter((c) => c.asset === asset && c.state !== 'closing');
       if (exposed.length && Date.now() - this.feedStaleSince[asset] > this.cfg.feedStaleFlattenMs) {
@@ -153,7 +155,12 @@ export class PaperFarmer {
     this.lowBalanceLogged = false;
     const busy = this.cfg.onePairPerAsset ? new Set(active.map((c) => c.asset)) : new Set<Asset>();
     // An asset whose opens keep failing (usually its OI cap is full) sits out; the other one keeps farming.
-    for (const a of ASSETS) if (!this.feed.healthy(undefined, a) || Date.now() < this.assetFailures[a].until) busy.add(a);
+    // After a feed/network outage, wait until the connection has been steady for a while: a flaky link
+    // otherwise opens a cycle only to close it at the next drop.
+    for (const a of ASSETS) {
+      if (!this.feed.healthy(undefined, a) || Date.now() < this.assetFailures[a].until) busy.add(a);
+      if (this.feedBadAt[a] && Date.now() - this.feedBadAt[a] < this.cfg.feedRecoveryMs) busy.add(a);
+    }
     const pick = pickAsset(this.feed, this.cfg.selectorWindowMs, 0, busy); // any activity level: we just wait for the move
     if (!pick) return;
     this.lastStart = Date.now();

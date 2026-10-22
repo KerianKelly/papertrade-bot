@@ -94,3 +94,27 @@ test('farm at 50x / $20 legs: same $1,000 positions, a crash that liquidated 100
   assert.ok(stats.net < 0 && stats.net > -3, `net ${stats.net}`);
   assert.deepEqual(ex.openPositionIds(), []);
 });
+
+test('farm: after a feed outage, no new cycle opens until the feed has been steady for FEED_RECOVERY_MS', async () => {
+  class FlakyFeed extends FakeFeed { up = true; override healthy() { return this.up; } }
+  const feed = new FlakyFeed();
+  const cfg = { ...config, leverage: 50, marginPerLegUsd: 20, farmMoveBps: 60, farmBudgetUsd: 0, maxConcurrentPairs: 1, pairCooldownMs: 50,
+    closeRetryMs: 100, secondLegGraceMs: 200, feedStaleFlattenMs: 100, feedRecoveryMs: 1500 };
+  const ex = new SimExecutor(feed as unknown as PriceFeed, 49, [0, 0], false);
+  await ex.init();
+  for (let i = 0; i < 30; i++) { feed.push('BTC', 100_000 + (i % 2) * 20); feed.push('ETH', 3000); }
+  const farmer = new PaperFarmer(cfg, feed as unknown as PriceFeed, ex, new Journal(`${mkdtempSync(`${tmpdir()}/ptf-`)}/j.jsonl`));
+  farmer.start();
+  await sleep(400);
+  assert.equal(farmer.activeCycles().length, 1);
+  feed.up = false;                 // network drops: the open cycle is flattened
+  await sleep(600);
+  assert.equal(farmer.stats.cycles, 1);
+  feed.up = true;                  // back, but not yet steady
+  await sleep(500);
+  assert.equal(farmer.activeCycles().length, 0, 'reopened too soon after the outage');
+  await sleep(1500);
+  assert.equal(farmer.activeCycles().length, 1, 'should reopen once the feed has been steady');
+  await farmer.stop();
+  assert.deepEqual(ex.openPositionIds(), []);
+});
